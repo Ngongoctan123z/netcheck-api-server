@@ -10,11 +10,14 @@ const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fet
 
 const app = express();
 
-// Middleware CORS (giải quyết lỗi frontend gọi cross domain)
-app.use(cors());
+// ✅ CORS: Cho phép frontend gọi API từ đúng domain
+app.use(cors({
+  origin: 'https://netcheck-crtu.onrender.com' // đổi thành domain frontend của bạn
+}));
+
 app.use(express.json({ limit: '100kb' }));
 
-// Giới hạn tốc độ request để chống spam
+// ✅ Giới hạn tốc độ request để chống spam
 const globalLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 200,
@@ -26,7 +29,7 @@ const DEFAULT_TIMEOUT_MS = 20000;
 const MAX_TIMEOUT_MS = 30000;
 const TEST_URL = 'https://httpbin.org/get';
 
-// --- Helper function parse proxy ---
+// --- Helper: parse proxy ---
 function parseProxyString(str) {
   const trimmed = (str || '').trim();
   if (!trimmed) return null;
@@ -52,7 +55,7 @@ function parseProxyString(str) {
   return { ip, port, user, pass };
 }
 
-// --- Check proxy TCP port ---
+// --- TCP check ---
 function tcpPortCheck(host, port, timeoutMs) {
   return new Promise((resolve) => {
     const socket = new net.Socket();
@@ -79,7 +82,7 @@ function tcpPortCheck(host, port, timeoutMs) {
   });
 }
 
-// --- Tạo proxy agent tương ứng loại proxy ---
+// --- Tạo proxy agent ---
 function createProxyAgent({ ip, port, user, pass, type }) {
   if (type === 'http' || type === 'https') {
     const proxyUrl = `http://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${ip}:${port}`;
@@ -92,7 +95,7 @@ function createProxyAgent({ ip, port, user, pass, type }) {
   throw new Error('Unsupported proxy type: ' + type);
 }
 
-// --- Check proxy HTTP (qua agent) ---
+// --- HTTP proxy check ---
 async function httpProxyCheck(parsed, type, timeoutMs, maxTries = 2) {
   let lastError = null;
   let totalLatency = 0;
