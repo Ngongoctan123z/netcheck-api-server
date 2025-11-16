@@ -16,6 +16,7 @@ const TEST_URL = 'https://httpbin.org/get';
 // ✅ CORS: Cho phép gọi từ frontend local và Render
 app.use(cors({
   origin: function (origin, callback) {
+    // Cho phép local và Render
     const allowedOrigins = [
       'http://localhost:3000',
       'https://netcheck-crtu.onrender.com'
@@ -23,7 +24,12 @@ app.use(cors({
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      // Trong môi trường production, cho phép tất cả
+      if (process.env.NODE_ENV === 'production') {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
     }
   }
 }));
@@ -35,32 +41,44 @@ app.use('/api/', rateLimit({
   message: { error: 'Too many requests, please slow down.' }
 }));
 
+// ✅ Parse proxy string: user:pass@ip:port
 function parseProxyString(str) {
-  const trimmed = str?.trim();
-  if (!trimmed || !trimmed.includes('@')) return null;
+  if (!str || typeof str !== 'string') return null;
+  const trimmed = str.trim();
+  if (!trimmed.includes('@')) return null;
+
   const [authPart, hostPart] = trimmed.split('@');
+  if (!authPart || !hostPart) return null;
+
   const [user, pass] = authPart.split(':');
   const [ip, portStr] = hostPart.split(':');
   const port = parseInt(portStr, 10);
-  if (!user || !pass || !ip || Number.isNaN(port) || port < 1 || port > 65535) return null;
+
+  if (!user || !pass || !ip || Number.isNaN(port) || port < 1 || port > 65535) {
+    return null;
+  }
   return { ip, port, user, pass };
 }
 
+// ✅ TCP check
 function tcpPortCheck(host, port, timeoutMs) {
   return new Promise((resolve) => {
     const socket = new net.Socket();
     const start = Date.now();
     let done = false;
+
     const finish = (alive, message) => {
       if (done) return;
       done = true;
       socket.destroy();
       resolve({ alive, latency: Date.now() - start, message });
     };
+
     socket.setTimeout(timeoutMs);
     socket.on('connect', () => finish(true, 'TCP connect OK'));
     socket.on('timeout', () => finish(false, 'TCP timeout'));
     socket.on('error', err => finish(false, 'TCP error: ' + err.message));
+
     try {
       socket.connect(port, host);
     } catch (err) {
@@ -69,6 +87,7 @@ function tcpPortCheck(host, port, timeoutMs) {
   });
 }
 
+// ✅ Proxy agent
 function createProxyAgent({ ip, port, user, pass, type }) {
   const encoded = `${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${ip}:${port}`;
   if (type === 'http' || type === 'https') return new HttpsProxyAgent(`http://${encoded}`);
@@ -76,9 +95,11 @@ function createProxyAgent({ ip, port, user, pass, type }) {
   throw new Error('Unsupported proxy type: ' + type);
 }
 
+// ✅ HTTP/SOCKS check
 async function httpProxyCheck(parsed, type, timeoutMs, maxTries = 2) {
   let lastError = null;
   let totalLatency = 0;
+
   for (let attempt = 1; attempt <= maxTries; attempt++) {
     const startTime = Date.now();
     try {
@@ -90,8 +111,10 @@ async function httpProxyCheck(parsed, type, timeoutMs, maxTries = 2) {
         proxy: false,
         validateStatus: () => true
       });
+
       const elapsed = Date.now() - startTime;
       totalLatency += elapsed;
+
       if (response.status >= 200 && response.status < 400) {
         return {
           alive: true,
@@ -107,6 +130,7 @@ async function httpProxyCheck(parsed, type, timeoutMs, maxTries = 2) {
       lastError = err.message || 'Proxy connection failed';
     }
   }
+
   return {
     alive: false,
     latency: totalLatency,
@@ -116,21 +140,25 @@ async function httpProxyCheck(parsed, type, timeoutMs, maxTries = 2) {
   };
 }
 
+// ✅ API check proxy
 app.post('/api/check-proxy-strong', async (req, res) => {
   try {
     const { proxy, type, timeoutMs: rawTimeout } = req.body || {};
     const allowedTypes = ['http', 'https', 'socks4', 'socks5'];
+
     if (!proxy || typeof proxy !== 'string') {
       return res.status(400).json({ error: 'Missing or invalid proxy' });
     }
     if (!allowedTypes.includes(type)) {
       return res.status(400).json({ error: 'Invalid proxy type. Supported: http, https, socks4, socks5' });
     }
+
     const timeoutMs = Math.min(Math.max(parseInt(rawTimeout, 10) || DEFAULT_TIMEOUT_MS, 1000), MAX_TIMEOUT_MS);
     const parsed = parseProxyString(proxy);
     if (!parsed) {
       return res.status(400).json({ error: 'Required format: user:pass@ip:port' });
     }
+
     const tcp = await tcpPortCheck(parsed.ip, parsed.port, timeoutMs);
     if (!tcp.alive) {
       return res.json({
@@ -143,6 +171,7 @@ app.post('/api/check-proxy-strong', async (req, res) => {
         alive: false
       });
     }
+
     const http = await httpProxyCheck(parsed, type, timeoutMs);
     return res.json({
       proxy,
@@ -159,6 +188,7 @@ app.post('/api/check-proxy-strong', async (req, res) => {
   }
 });
 
+// ✅ API ip-info
 app.get('/ip-info', async (req, res) => {
   try {
     const response = await fetch('https://ip-api.com/json/');
